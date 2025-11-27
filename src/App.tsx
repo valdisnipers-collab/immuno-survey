@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { HashRouter, Routes, Route } from 'react-router-dom';
 import { Landing } from './components/Landing';
 import { Survey } from './components/Survey';
@@ -12,15 +12,11 @@ function AppContent() {
   const [hasVoted, setHasVoted] = useState(false);
 
   useEffect(() => {
-    // TESTĒŠANAS REŽĪMS: Atspējota pārbaude, vai lietotājs jau ir balsojis.
-    // Lai ieslēgtu atpakaļ, atkomentējiet zemāk esošo kodu:
-    
-    /*
+    // Production Mode: Check if already voted
     const votedLocal = localStorage.getItem('hasVoted');
     if (votedLocal === 'true') {
       setHasVoted(true);
     }
-    */
     
     // Log for debug
     const fp = generateFingerprint();

@@ -79,10 +79,7 @@ export const Survey: React.FC<SurveyProps> = ({ deviceType, onComplete }) => {
     };
 
     if (isSupabaseConfigured() && supabase) {
-      // TESTĒŠANAS REŽĪMS: Mēs noņemam pārbaudi par "esošo ierīci",
-      // lai varētu sūtīt datus vairākas reizes.
-      
-      /* 
+      // Check if device already exists (Production Mode Enabled)
       const { data: existing } = await supabase
         .from('responses')
         .select('id')
@@ -90,11 +87,10 @@ export const Survey: React.FC<SurveyProps> = ({ deviceType, onComplete }) => {
         .single();
       
       if (existing) {
-        alert("Šī ierīce jau ir iesniegusi aptauju!");
+        alert("Šī ierīce jau ir iesniegusi aptauju! Paldies par dalību.");
         setLoading(false);
         return;
       }
-      */
 
       const { error } = await supabase.from('responses').insert([payload]);
       if (error) {
@@ -108,8 +104,6 @@ export const Survey: React.FC<SurveyProps> = ({ deviceType, onComplete }) => {
       await new Promise(resolve => setTimeout(resolve, 1000));
     }
 
-    // Nav obligāti vairs saglabāt localStorage, ja gribam ļaut atkārtot,
-    // bet atstājam, lai 'App.tsx' zinātu, ka jāpārslēdzas uz Success skatu.
     localStorage.setItem('hasVoted', 'true');
     setLoading(false);
     onComplete();

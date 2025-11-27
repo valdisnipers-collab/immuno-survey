@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { supabase, isSupabaseConfigured } from '../supabaseClient';
 import * as XLSX from 'xlsx';
-import { Download, Plus, Trash2, Edit2, LogIn, Database, LogOut, X, Save, AlertCircle, ArrowUp, ArrowDown, RefreshCw } from 'lucide-react';
+import { Download, Plus, Trash2, Edit2, LogIn, Database, LogOut, X, Save, AlertCircle, ArrowUp, ArrowDown, RefreshCw, Loader2 } from 'lucide-react';
 import { Question } from '../types';
 import { DEFAULT_QUESTIONS } from '../utils/data';
 
@@ -13,6 +13,7 @@ export const Admin: React.FC = () => {
   const [questions, setQuestions] = useState<Question[]>([]);
   const [activeTab, setActiveTab] = useState<'questions' | 'results'>('questions');
   const [responsesCount, setResponsesCount] = useState(0);
+  const [savingOrder, setSavingOrder] = useState(false);
 
   // --- Modal & Form State ---
   const [showModal, setShowModal] = useState(false);
@@ -79,7 +80,29 @@ export const Admin: React.FC = () => {
     setSession(null);
   };
 
-  // --- ACTIONS: LIST MANIPULATION ---
+  // --- ACTIONS: LIST MANIPULATION (AUTO-SAVE) ---
+
+  const saveOrderToDb = async (updatedQuestions: Question[]) => {
+      if (!isSupabaseConfigured() || !supabase) return;
+      
+      setSavingOrder(true);
+      
+      // Prepare payload with updated order index
+      const payload = updatedQuestions.map((q, i) => ({
+          ...q,
+          order: i + 1,
+          options: q.options || null // Ensure JSON compatibility
+      }));
+
+      const { error } = await supabase.from('questions').upsert(payload);
+      
+      if (error) {
+          console.error("Order save failed", error);
+          alert("Kļūda saglabājot secību. Lūdzu pārlādējiet lapu.");
+      }
+      
+      setSavingOrder(false);
+  };
 
   const moveQuestion = (index: number, direction: 'up' | 'down') => {
       const newQuestions = [...questions];
@@ -87,10 +110,15 @@ export const Admin: React.FC = () => {
           [newQuestions[index], newQuestions[index - 1]] = [newQuestions[index - 1], newQuestions[index]];
       } else if (direction === 'down' && index < newQuestions.length - 1) {
           [newQuestions[index], newQuestions[index + 1]] = [newQuestions[index + 1], newQuestions[index]];
+      } else {
+          return; // No change
       }
-      // Re-calculate order based on index
-      const updated = newQuestions.map((q, i) => ({ ...q, order: i + 1 }));
-      setQuestions(updated);
+      
+      // Optimistic UI Update
+      setQuestions(newQuestions);
+      
+      // Background Save
+      saveOrderToDb(newQuestions);
   };
 
   const initializeDefaults = async () => {
@@ -100,7 +128,6 @@ export const Admin: React.FC = () => {
       const defaultsWithOrder = DEFAULT_QUESTIONS.map((q, i) => ({
           ...q,
           order: i + 1,
-          // Ensure options are JSON compatible
           options: q.options || null 
       }));
 
@@ -114,29 +141,6 @@ export const Admin: React.FC = () => {
           }
       } else {
           setQuestions(defaultsWithOrder);
-      }
-      setLoading(false);
-  };
-
-  const saveAllChanges = async () => {
-      setLoading(true);
-      // Ensure order is correct before saving
-      const questionsToSave = questions.map((q, i) => ({
-          ...q,
-          order: i + 1,
-          options: q.options || null // Ensure no undefined values for DB
-      }));
-
-      if (isSupabaseConfigured() && supabase) {
-          const { error } = await supabase.from('questions').upsert(questionsToSave);
-          if (error) {
-              alert("Kļūda saglabājot izmaiņas: " + error.message);
-          } else {
-              alert("Visas izmaiņas veiksmīgi saglabātas datubāzē!");
-              fetchData();
-          }
-      } else {
-          alert("Demo režīms: Izmaiņas saglabātas lokāli.");
       }
       setLoading(false);
   };
@@ -241,13 +245,20 @@ export const Admin: React.FC = () => {
 
     if (dataToExport.length === 0) return alert("Nav datu ko eksportēt.");
 
+    // Improved mapping to ensure deleted questions still show up if possible, or fall back to ID
     const flatData = dataToExport.map((row: any) => {
-        const rowData: any = { Datums: new Date(row.created_at).toLocaleString('lv-LV'), Ierīces_ID: row.device_id };
+        const rowData: any = { 
+            Datums: new Date(row.created_at).toLocaleString('lv-LV'), 
+            Ierīces_ID: row.device_id 
+        };
+
         if (Array.isArray(row.answers)) {
             row.answers.forEach((ans: any) => {
+                // Try to find current question text, if not found (deleted), try to make ID readable or just use ID
                 const questionDef = questions.find(q => q.id === ans.questionId);
-                const header = questionDef ? questionDef.text : ans.questionId;
-                rowData[header] = ans.answer;
+                const header = questionDef ? questionDef.text : `(Dzēsts) ${ans.questionId}`;
+                
+                rowData[header] = Array.isArray(ans.answer) ? ans.answer.join(', ') : ans.answer;
             });
         }
         return rowData;
@@ -314,17 +325,13 @@ export const Admin: React.FC = () => {
             <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-gray-100 dark:border-slate-700 overflow-hidden">
                 <div className="flex flex-col lg:flex-row border-b border-gray-200 dark:border-slate-700 p-6 justify-between items-start lg:items-center gap-4 bg-gray-50/50 dark:bg-slate-800">
                     <div>
-                        <h3 className="font-bold text-xl text-gray-800 dark:text-white">Jautājumu redaktors</h3>
-                        <p className="text-sm text-gray-500 mt-1">Pārvaldi anketas saturu un secību.</p>
+                        <h3 className="font-bold text-xl text-gray-800 dark:text-white flex items-center gap-2">
+                            Jautājumu redaktors 
+                            {savingOrder && <Loader2 className="animate-spin text-science-600" size={16}/>}
+                        </h3>
+                        <p className="text-sm text-gray-500 mt-1">Izmaiņas secībā tiek saglabātas automātiski.</p>
                     </div>
                     <div className="flex flex-wrap gap-3 w-full lg:w-auto">
-                        <button 
-                             onClick={saveAllChanges}
-                             disabled={loading}
-                             className="flex-1 lg:flex-none flex items-center justify-center gap-2 px-6 py-3 bg-green-600 text-white rounded-xl text-sm hover:bg-green-700 font-bold shadow-md transition-all active:scale-95"
-                        >
-                            <Save size={18} /> Saglabāt Izmaiņas
-                        </button>
                         <button 
                             onClick={openAddModal}
                             className="flex-1 lg:flex-none flex items-center justify-center gap-2 px-6 py-3 bg-gray-900 dark:bg-white dark:text-gray-900 text-white rounded-xl text-sm hover:opacity-90 font-bold shadow-md transition-all active:scale-95"
@@ -356,15 +363,15 @@ export const Admin: React.FC = () => {
                                     <div className="flex sm:flex-col gap-1 pr-2">
                                         <button 
                                             onClick={() => moveQuestion(idx, 'up')}
-                                            disabled={idx === 0}
-                                            className="p-1 rounded text-gray-400 hover:text-science-600 hover:bg-science-50 disabled:opacity-20"
+                                            disabled={idx === 0 || savingOrder}
+                                            className="p-1 rounded text-gray-400 hover:text-science-600 hover:bg-science-50 disabled:opacity-20 transition"
                                         >
                                             <ArrowUp size={20} />
                                         </button>
                                         <button 
                                             onClick={() => moveQuestion(idx, 'down')}
-                                            disabled={idx === questions.length - 1}
-                                            className="p-1 rounded text-gray-400 hover:text-science-600 hover:bg-science-50 disabled:opacity-20"
+                                            disabled={idx === questions.length - 1 || savingOrder}
+                                            className="p-1 rounded text-gray-400 hover:text-science-600 hover:bg-science-50 disabled:opacity-20 transition"
                                         >
                                             <ArrowDown size={20} />
                                         </button>
