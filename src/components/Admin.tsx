@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { supabase, isSupabaseConfigured } from '../supabaseClient';
 import * as XLSX from 'xlsx';
-import { Download, Plus, Trash2, Edit2, LogIn, Database, LogOut, X, Save, AlertCircle, ArrowUp, ArrowDown, Loader2, CheckCircle2, RefreshCw } from 'lucide-react';
+import { Download, Plus, Trash2, Edit2, LogIn, Database, LogOut, X, Save, AlertCircle, ArrowUp, ArrowDown, Loader2, CheckCircle2, RefreshCw, AlertTriangle, RotateCcw } from 'lucide-react';
 import { Question } from '../types';
 import { DEFAULT_QUESTIONS } from '../utils/data';
 
@@ -14,6 +14,7 @@ export const Admin: React.FC = () => {
   const [responsesCount, setResponsesCount] = useState(0);
   const [savingOrder, setSavingOrder] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [isResetting, setIsResetting] = useState(false);
 
   // --- Modal & Form State ---
   const [showModal, setShowModal] = useState(false);
@@ -80,6 +81,38 @@ export const Admin: React.FC = () => {
     setSession(null);
   };
 
+  // --- ACTIONS: RESET & MAINTENANCE ---
+
+  const handleResetDatabase = async () => {
+      if (!isSupabaseConfigured() || !supabase) return alert("Nav savienojuma ar datubāzi.");
+      
+      const confirm1 = confirm("UZMANĪBU! \n\nŠī darbība neatgriezeniski IZDZĒSIS VISAS iesniegtās anketas no datubāzes.\n\nVai tiešām vēlaties turpināt?");
+      if (!confirm1) return;
+
+      const confirm2 = confirm("Vai tiešām? Visi dati tiks zaudēti un nevarēs tikt atjaunoti.");
+      if (!confirm2) return;
+
+      setIsResetting(true);
+      // Delete all records where ID is not -1 (effectively all records)
+      const { error } = await supabase.from('responses').delete().neq('id', -1);
+      
+      if (error) {
+          alert("Kļūda dzēšot datus: " + error.message);
+      } else {
+          alert("Datubāze ir pilnībā notīrīta. Lietotāji var pildīt anketas no jauna.");
+          fetchData();
+      }
+      setIsResetting(false);
+  };
+
+  const handleLocalReset = () => {
+      if (confirm("Tas notīrīs informāciju Tavā ierīcē, ka esi jau balsojis. Tas neietekmēs citu datus.\n\nVai turpināt?")) {
+          localStorage.removeItem('hasVoted');
+          alert("Tavas ierīces balsojuma statuss ir notīrīts. Dodies uz sākumlapu, lai pildītu testu.");
+          window.location.hash = "/";
+      }
+  };
+
   // --- ACTIONS: LIST MANIPULATION (AUTO-SAVE) ---
 
   const saveOrderToDb = async (updatedQuestions: Question[]) => {
@@ -88,7 +121,6 @@ export const Admin: React.FC = () => {
       setSavingOrder(true);
       setSaveSuccess(false);
       
-      // Prepare payload with updated order index
       const payload = updatedQuestions.map((q, i) => ({
           ...q,
           order: i + 1,
@@ -99,7 +131,6 @@ export const Admin: React.FC = () => {
       
       if (error) {
           console.error("Order save failed", error);
-          alert("Kļūda saglabājot secību. Lūdzu pārlādējiet lapu.");
       } else {
           setSaveSuccess(true);
           setTimeout(() => setSaveSuccess(false), 2000);
@@ -247,7 +278,6 @@ export const Admin: React.FC = () => {
 
     if (!rawResponses || rawResponses.length === 0) return alert("Nav datu ko eksportēt.");
 
-    // 1. Prepare Header Row based on CURRENT questions (and their order)
     const questionIdToText: Record<string, string> = {};
     const questionOrder: string[] = []; 
 
@@ -256,7 +286,6 @@ export const Admin: React.FC = () => {
         questionOrder.push(q.id);
     });
 
-    // 2. Transform Data using Record<string, any> to avoid TS errors
     const formattedData = rawResponses.map((row: any) => {
         const rowObject: Record<string, any> = {
             'ID': row.id,
@@ -264,41 +293,29 @@ export const Admin: React.FC = () => {
             'Ierīce': row.device_id
         };
 
-        // Initialize all active question columns
         questionOrder.forEach(qId => {
             const qText = questionIdToText[qId];
             rowObject[qText] = ""; 
         });
 
-        // Fill in actual answers
         if (Array.isArray(row.answers)) {
             row.answers.forEach((ans: any) => {
                 const qText = questionIdToText[ans.questionId];
-                
-                // If question exists in current schema, put it there.
                 const key = qText || `(Dzēsts) ${ans.questionId}`;
-                
                 let val = ans.answer;
-                if (Array.isArray(val)) val = val.join(', '); // Handle multiple choice arrays
+                if (Array.isArray(val)) val = val.join(', ');
                 if (val === null || val === undefined) val = "";
-                
                 rowObject[key] = val;
             });
         }
         return rowObject;
     });
 
-    // 3. Generate Sheet
     const worksheet = XLSX.utils.json_to_sheet(formattedData);
-    
-    // Auto-adjust col widths
     const colWidths = Object.keys(formattedData[0] || {}).map(key => ({ wch: key.length > 50 ? 50 : key.length + 5 }));
-    // Fix TS error by casting to any for custom property
     (worksheet as any)['!cols'] = colWidths;
-
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, "Aptaujas Dati");
-    
     const fileName = `ImmunoSurvey_Eksports_${new Date().toISOString().slice(0,10)}.xlsx`;
     XLSX.writeFile(workbook, fileName);
   };
@@ -319,6 +336,13 @@ export const Admin: React.FC = () => {
                 </div>
                 <button type="submit" disabled={loading} className="w-full py-3 bg-science-600 text-white rounded-lg font-bold hover:bg-science-700 transition flex justify-center items-center gap-2"><LogIn size={20} /> Ielogoties</button>
             </form>
+            <div className="mt-6 flex justify-center">
+                 {isSupabaseConfigured() ? (
+                     <span className="flex items-center gap-2 text-xs text-green-600 bg-green-100 px-3 py-1 rounded-full"><Database size={12}/> Savienots ar DB</span>
+                 ) : (
+                     <span className="flex items-center gap-2 text-xs text-red-600 bg-red-100 px-3 py-1 rounded-full"><AlertTriangle size={12}/> Nav savienojuma (Demo)</span>
+                 )}
+            </div>
         </div>
       </div>
     );
@@ -360,7 +384,7 @@ export const Admin: React.FC = () => {
             </div>
 
             {/* Questions Management */}
-            <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-gray-100 dark:border-slate-700 overflow-hidden">
+            <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-gray-100 dark:border-slate-700 overflow-hidden mb-8">
                 <div className="flex flex-col lg:flex-row border-b border-gray-200 dark:border-slate-700 p-6 justify-between items-start lg:items-center gap-4 bg-gray-50/50 dark:bg-slate-800">
                     <div>
                         <h3 className="font-bold text-xl text-gray-800 dark:text-white flex items-center gap-3">
@@ -453,6 +477,33 @@ export const Admin: React.FC = () => {
                         </div>
                     )}
                 </div>
+            </div>
+
+             {/* DANGER ZONE */}
+             <div className="bg-red-50 dark:bg-red-900/10 border border-red-200 dark:border-red-900/30 rounded-2xl p-6">
+                <h3 className="text-red-800 dark:text-red-400 font-bold text-lg flex items-center gap-2 mb-4">
+                    <AlertTriangle size={20} /> Bīstamā zona
+                </h3>
+                <div className="flex flex-col sm:flex-row gap-4">
+                    <button 
+                        onClick={handleLocalReset}
+                        className="flex-1 bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-600 text-gray-700 dark:text-gray-200 px-4 py-3 rounded-xl hover:bg-gray-100 dark:hover:bg-slate-700 transition flex items-center justify-center gap-2 font-medium"
+                    >
+                        <RotateCcw size={18} /> Atļaut man balsot no jauna
+                    </button>
+                    <button 
+                        onClick={handleResetDatabase}
+                        disabled={isResetting}
+                        className="flex-1 bg-red-600 text-white px-4 py-3 rounded-xl hover:bg-red-700 transition flex items-center justify-center gap-2 font-medium shadow-sm active:scale-95"
+                    >
+                        {isResetting ? <Loader2 className="animate-spin" size={18}/> : <Trash2 size={18} />} 
+                        Dzēst VISUS datus (Reset DB)
+                    </button>
+                </div>
+                <p className="text-xs text-red-600/70 dark:text-red-400/70 mt-3 text-center sm:text-left">
+                    "Dzēst VISUS datus" neatgriezeniski izdzēsīs visas iesniegtās anketas no datubāzes. 
+                    "Atļaut man balsot no jauna" ietekmē tikai Tavu ierīci.
+                </p>
             </div>
         </main>
 
