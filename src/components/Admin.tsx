@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { supabase, isSupabaseConfigured } from '../supabaseClient';
 import * as XLSX from 'xlsx';
-import { Download, Plus, Trash2, Edit2, LogIn, Database, LogOut, X, Save, AlertCircle, ArrowUp, ArrowDown, RefreshCw, Loader2 } from 'lucide-react';
+import { Download, Plus, Trash2, Edit2, LogIn, Database, LogOut, X, Save, AlertCircle, ArrowUp, ArrowDown, Loader2, CheckCircle2, RefreshCw } from 'lucide-react';
 import { Question } from '../types';
 import { DEFAULT_QUESTIONS } from '../utils/data';
 
@@ -11,9 +11,9 @@ export const Admin: React.FC = () => {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [questions, setQuestions] = useState<Question[]>([]);
-  const [activeTab, setActiveTab] = useState<'questions' | 'results'>('questions');
   const [responsesCount, setResponsesCount] = useState(0);
   const [savingOrder, setSavingOrder] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState(false);
 
   // --- Modal & Form State ---
   const [showModal, setShowModal] = useState(false);
@@ -54,6 +54,7 @@ export const Admin: React.FC = () => {
       if (qData && qData.length > 0) {
           setQuestions(qData as unknown as Question[]);
       } else if (!error && (!qData || qData.length === 0)) {
+          // If DB is empty, keep state empty so user can decide to load defaults
           setQuestions([]);
       }
   }
@@ -86,6 +87,7 @@ export const Admin: React.FC = () => {
       if (!isSupabaseConfigured() || !supabase) return;
       
       setSavingOrder(true);
+      setSaveSuccess(false);
       
       // Prepare payload with updated order index
       const payload = updatedQuestions.map((q, i) => ({
@@ -99,6 +101,9 @@ export const Admin: React.FC = () => {
       if (error) {
           console.error("Order save failed", error);
           alert("Kļūda saglabājot secību. Lūdzu pārlādējiet lapu.");
+      } else {
+          setSaveSuccess(true);
+          setTimeout(() => setSaveSuccess(false), 2000);
       }
       
       setSavingOrder(false);
@@ -245,28 +250,49 @@ export const Admin: React.FC = () => {
 
     if (dataToExport.length === 0) return alert("Nav datu ko eksportēt.");
 
-    // Improved mapping to ensure deleted questions still show up if possible, or fall back to ID
+    // Improved Excel Mapping Logic
+    // 1. Create a map of QuestionID -> QuestionText for all currently active questions
+    const questionMap: Record<string, string> = {};
+    questions.forEach(q => {
+        questionMap[q.id] = q.text;
+    });
+
+    // 2. Build rows
     const flatData = dataToExport.map((row: any) => {
+        // Base columns
         const rowData: any = { 
-            Datums: new Date(row.created_at).toLocaleString('lv-LV'), 
-            Ierīces_ID: row.device_id 
+            'ID': row.id,
+            'Datums': new Date(row.created_at).toLocaleString('lv-LV'), 
+            'Ierīces_ID': row.device_id 
         };
 
+        // Initialize all active question columns with empty string to ensure column order
+        questions.forEach(q => {
+            rowData[q.text] = "";
+        });
+
+        // Fill in answers
         if (Array.isArray(row.answers)) {
             row.answers.forEach((ans: any) => {
-                // Try to find current question text, if not found (deleted), try to make ID readable or just use ID
-                const questionDef = questions.find(q => q.id === ans.questionId);
-                const header = questionDef ? questionDef.text : `(Dzēsts) ${ans.questionId}`;
+                // Determine column name
+                // If question exists in current list, use its text. If not (deleted), append (Dzēsts)
+                const columnName = questionMap[ans.questionId] || `(Dzēsts) ${ans.questionId}`;
                 
-                rowData[header] = Array.isArray(ans.answer) ? ans.answer.join(', ') : ans.answer;
+                // Format value
+                const val = Array.isArray(ans.answer) ? ans.answer.join(', ') : ans.answer;
+                
+                rowData[columnName] = val;
             });
         }
         return rowData;
     });
 
     const worksheet = XLSX.utils.json_to_sheet(flatData);
-    const colWidths = Object.keys(flatData[0] || {}).map(key => ({ wch: Math.max(key.length, 15) }));
+    
+    // Auto-adjust column width slightly
+    const colWidths = Object.keys(flatData[0] || {}).map(key => ({ wch: 20 }));
     worksheet['!cols'] = colWidths;
+
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, "Rezultāti");
     XLSX.writeFile(workbook, `ImmunoSurvey_Dati_${new Date().toISOString().slice(0,10)}.xlsx`);
@@ -312,12 +338,19 @@ export const Admin: React.FC = () => {
                     <h3 className="text-gray-500 dark:text-gray-400 text-sm font-medium uppercase tracking-wider">Kopā iesniegumi</h3>
                     <p className="text-5xl font-bold mt-2 text-science-600 dark:text-science-400">{responsesCount}</p>
                 </div>
-                <div onClick={downloadExcel} className="bg-gradient-to-br from-science-500 to-science-700 p-6 rounded-2xl shadow-lg text-white flex items-center justify-between cursor-pointer hover:shadow-xl hover:scale-[1.02] transition-all group">
+                <div 
+                    onClick={downloadExcel} 
+                    className="bg-gradient-to-br from-science-500 to-science-700 p-6 rounded-2xl shadow-lg text-white flex items-center justify-between cursor-pointer hover:shadow-xl hover:scale-[1.02] transition-all group select-none active:scale-95"
+                >
                     <div>
                         <h3 className="font-bold text-2xl mb-1">Eksportēt Datus</h3>
-                        <p className="text-science-100 text-sm opacity-90 group-hover:opacity-100">Lejupielādēt rezultātus Excel (.xlsx)</p>
+                        <p className="text-science-100 text-sm opacity-90 group-hover:opacity-100">
+                            Lejupielādēt Excel (.xlsx) formātā
+                        </p>
                     </div>
-                    <div className="bg-white/20 p-4 rounded-full backdrop-blur-sm group-hover:bg-white/30 transition"><Download size={32} /></div>
+                    <div className="bg-white/20 p-4 rounded-full backdrop-blur-sm group-hover:bg-white/30 transition">
+                        {loading ? <Loader2 className="animate-spin" size={32} /> : <Download size={32} />}
+                    </div>
                 </div>
             </div>
 
@@ -325,11 +358,12 @@ export const Admin: React.FC = () => {
             <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-gray-100 dark:border-slate-700 overflow-hidden">
                 <div className="flex flex-col lg:flex-row border-b border-gray-200 dark:border-slate-700 p-6 justify-between items-start lg:items-center gap-4 bg-gray-50/50 dark:bg-slate-800">
                     <div>
-                        <h3 className="font-bold text-xl text-gray-800 dark:text-white flex items-center gap-2">
+                        <h3 className="font-bold text-xl text-gray-800 dark:text-white flex items-center gap-3">
                             Jautājumu redaktors 
-                            {savingOrder && <Loader2 className="animate-spin text-science-600" size={16}/>}
+                            {savingOrder && <span className="text-xs font-normal text-science-600 bg-science-100 px-2 py-1 rounded-full flex items-center gap-1"><Loader2 className="animate-spin" size={12}/> Saglabā...</span>}
+                            {saveSuccess && <span className="text-xs font-normal text-green-600 bg-green-100 px-2 py-1 rounded-full flex items-center gap-1"><CheckCircle2 size={12}/> Saglabāts</span>}
                         </h3>
-                        <p className="text-sm text-gray-500 mt-1">Izmaiņas secībā tiek saglabātas automātiski.</p>
+                        <p className="text-sm text-gray-500 mt-1">Izmanto bultiņas, lai mainītu jautājumu secību (saglabājas automātiski).</p>
                     </div>
                     <div className="flex flex-wrap gap-3 w-full lg:w-auto">
                         <button 
@@ -359,25 +393,27 @@ export const Admin: React.FC = () => {
                         <div className="divide-y divide-gray-100 dark:divide-slate-700">
                             {questions.map((q, idx) => (
                                 <div key={q.id} className="p-4 sm:p-6 flex flex-col sm:flex-row justify-between items-start sm:items-center hover:bg-gray-50 dark:hover:bg-slate-700/30 transition group gap-4">
-                                    {/* Order Controls */}
-                                    <div className="flex sm:flex-col gap-1 pr-2">
+                                    {/* Order Controls - MORE PROMINENT */}
+                                    <div className="flex sm:flex-col gap-2 pr-4 border-r border-gray-100 dark:border-slate-700 items-center justify-center">
                                         <button 
                                             onClick={() => moveQuestion(idx, 'up')}
                                             disabled={idx === 0 || savingOrder}
-                                            className="p-1 rounded text-gray-400 hover:text-science-600 hover:bg-science-50 disabled:opacity-20 transition"
+                                            className="p-2 rounded-lg bg-gray-100 dark:bg-slate-700 text-gray-500 hover:text-science-600 hover:bg-science-50 disabled:opacity-20 transition active:scale-90"
+                                            title="Pārvietot uz augšu"
                                         >
-                                            <ArrowUp size={20} />
+                                            <ArrowUp size={20} strokeWidth={3} />
                                         </button>
                                         <button 
                                             onClick={() => moveQuestion(idx, 'down')}
                                             disabled={idx === questions.length - 1 || savingOrder}
-                                            className="p-1 rounded text-gray-400 hover:text-science-600 hover:bg-science-50 disabled:opacity-20 transition"
+                                            className="p-2 rounded-lg bg-gray-100 dark:bg-slate-700 text-gray-500 hover:text-science-600 hover:bg-science-50 disabled:opacity-20 transition active:scale-90"
+                                            title="Pārvietot uz leju"
                                         >
-                                            <ArrowDown size={20} />
+                                            <ArrowDown size={20} strokeWidth={3} />
                                         </button>
                                     </div>
 
-                                    <div className="flex-1 w-full">
+                                    <div className="flex-1 w-full pl-2">
                                         <div className="flex items-center gap-3 mb-2">
                                             <span className="flex items-center justify-center w-6 h-6 rounded-full bg-science-100 dark:bg-science-900 text-science-700 dark:text-science-300 text-xs font-bold">
                                                 {idx + 1}
@@ -394,18 +430,18 @@ export const Admin: React.FC = () => {
                                         )}
                                     </div>
 
-                                    <div className="flex gap-2 w-full sm:w-auto pt-2 sm:pt-0">
+                                    <div className="flex gap-2 w-full sm:w-auto pt-4 sm:pt-0 border-t sm:border-t-0 border-gray-100 dark:border-slate-700 mt-4 sm:mt-0">
                                         <button 
                                             onClick={() => openEditModal(q)}
                                             className="flex-1 sm:flex-none flex justify-center items-center gap-2 px-4 py-2 border border-gray-200 dark:border-slate-600 rounded-lg text-gray-600 dark:text-gray-300 hover:bg-white dark:hover:bg-slate-600 hover:border-science-400 transition"
                                         >
-                                            <Edit2 size={16} /> 
+                                            <Edit2 size={16} /> <span className="sm:hidden">Rediģēt</span>
                                         </button>
                                         <button 
                                             onClick={() => deleteQuestion(q.id)}
                                             className="flex-1 sm:flex-none flex justify-center items-center gap-2 px-4 py-2 border border-red-100 dark:border-red-900/30 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 rounded-lg hover:bg-red-100 dark:hover:bg-red-900/40 transition"
                                         >
-                                            <Trash2 size={16} /> 
+                                            <Trash2 size={16} /> <span className="sm:hidden">Dzēst</span>
                                         </button>
                                     </div>
                                 </div>
