@@ -12,11 +12,15 @@ function AppContent() {
   const [hasVoted, setHasVoted] = useState(false);
 
   useEffect(() => {
-    // Check local storage
+    // TESTĒŠANAS REŽĪMS: Atspējota pārbaude, vai lietotājs jau ir balsojis.
+    // Lai ieslēgtu atpakaļ, atkomentējiet zemāk esošo kodu:
+    
+    /*
     const votedLocal = localStorage.getItem('hasVoted');
     if (votedLocal === 'true') {
       setHasVoted(true);
     }
+    */
     
     // Log for debug
     const fp = generateFingerprint();
