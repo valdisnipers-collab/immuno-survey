@@ -55,7 +55,9 @@ export const Admin: React.FC = () => {
       if (qData && qData.length > 0) {
           setQuestions(qData as unknown as Question[]);
       } else if (!error && (!qData || qData.length === 0)) {
-          setQuestions([]);
+          // Ja DB ir tukša, atstājam tukšu vai piedāvājam defaultus.
+          // Bet lai tabula neizskatītos briesmīgi, mēs sākumā ļaujam ielādēt.
+          setQuestions([]); 
       }
   }
 
@@ -64,6 +66,7 @@ export const Admin: React.FC = () => {
     if (!isSupabaseConfigured() || !supabase) {
         if (email === 'admin' && password === 'admin') {
             setSession({ user: { email: 'mock@admin.com'} });
+            setQuestions(DEFAULT_QUESTIONS); // Mock mode defaults
         } else {
             alert("Demo Login: admin / admin");
         }
@@ -93,7 +96,6 @@ export const Admin: React.FC = () => {
       if (!confirm2) return;
 
       setIsResetting(true);
-      // Delete all records where ID is not -1 (effectively all records)
       const { error } = await supabase.from('responses').delete().neq('id', -1);
       
       if (error) {
@@ -113,7 +115,7 @@ export const Admin: React.FC = () => {
       }
   };
 
-  // --- ACTIONS: LIST MANIPULATION (AUTO-SAVE) ---
+  // --- ACTIONS: LIST MANIPULATION ---
 
   const saveOrderToDb = async (updatedQuestions: Question[]) => {
       if (!isSupabaseConfigured() || !supabase) return;
@@ -146,7 +148,7 @@ export const Admin: React.FC = () => {
       } else if (direction === 'down' && index < newQuestions.length - 1) {
           [newQuestions[index], newQuestions[index + 1]] = [newQuestions[index + 1], newQuestions[index]];
       } else {
-          return; // No change
+          return;
       }
       setQuestions(newQuestions);
       saveOrderToDb(newQuestions);
@@ -176,7 +178,7 @@ export const Admin: React.FC = () => {
       setLoading(false);
   };
 
-  // --- ACTIONS: MODAL & CRUD ---
+  // --- ACTIONS: MODAL ---
 
   const openAddModal = () => {
       setEditingId(null);
@@ -204,7 +206,6 @@ export const Admin: React.FC = () => {
 
   const deleteQuestion = async (id: string) => {
       if (!confirm("Vai tiešām dzēst šo jautājumu?")) return;
-      
       if (isSupabaseConfigured() && supabase) {
           const { error } = await supabase.from('questions').delete().eq('id', id);
           if (error) alert("Kļūda dzēšot: " + error.message);
@@ -266,7 +267,6 @@ export const Admin: React.FC = () => {
     let rawResponses = [];
     if (isSupabaseConfigured() && supabase) {
         setLoading(true);
-        // Fetch ALL responses
         const { data, error } = await supabase.from('responses').select('*').order('created_at', { ascending: false });
         setLoading(false);
         if (error) return alert('Kļūda lejupielādējot datus: ' + error.message);
@@ -278,10 +278,13 @@ export const Admin: React.FC = () => {
 
     if (!rawResponses || rawResponses.length === 0) return alert("Nav datu ko eksportēt.");
 
+    // Prepare headers. Use DB questions, fallback to DEFAULT if DB is empty to ensure headers exist.
+    const activeQuestions = questions.length > 0 ? questions : DEFAULT_QUESTIONS;
+
     const questionIdToText: Record<string, string> = {};
     const questionOrder: string[] = []; 
 
-    questions.forEach(q => {
+    activeQuestions.forEach(q => {
         questionIdToText[q.id] = q.text;
         questionOrder.push(q.id);
     });
@@ -293,19 +296,23 @@ export const Admin: React.FC = () => {
             'Ierīce': row.device_id
         };
 
+        // Init columns
         questionOrder.forEach(qId => {
             const qText = questionIdToText[qId];
             rowObject[qText] = ""; 
         });
 
+        // Fill answers
         if (Array.isArray(row.answers)) {
             row.answers.forEach((ans: any) => {
-                const qText = questionIdToText[ans.questionId];
-                const key = qText || `(Dzēsts) ${ans.questionId}`;
+                // Try to find question text, if not found (e.g. deleted question), use ID
+                const qText = questionIdToText[ans.questionId] || `(ID: ${ans.questionId})`;
+                
                 let val = ans.answer;
                 if (Array.isArray(val)) val = val.join(', ');
                 if (val === null || val === undefined) val = "";
-                rowObject[key] = val;
+                
+                rowObject[qText] = val;
             });
         }
         return rowObject;
@@ -408,7 +415,7 @@ export const Admin: React.FC = () => {
                     {questions.length === 0 ? (
                         <div className="p-16 text-center text-gray-400 flex flex-col items-center">
                             <AlertCircle size={48} className="mb-4 opacity-20" />
-                            <p className="text-lg font-medium">Saraksts ir tukšs</p>
+                            <p className="text-lg font-medium">Saraksts ir tukšs (izmanto "default" datu ielādi)</p>
                             <p className="text-sm mb-6">Pievieno pirmo jautājumu vai ielādē gatavo paraugu.</p>
                             <button 
                                 onClick={initializeDefaults}
@@ -507,7 +514,7 @@ export const Admin: React.FC = () => {
             </div>
         </main>
 
-        {/* --- ADD / EDIT MODAL --- */}
+        {/* --- MODAL (Same as before) --- */}
         {showModal && (
             <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
                 <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]">

@@ -122,7 +122,7 @@ export const Survey: React.FC<SurveyProps> = ({ deviceType, onComplete }) => {
       const { error } = await supabase.from('responses').insert([payload]);
       if (error) {
         console.error("Submission DB Error:", error);
-        alert("Kļūda saglabājot datus. Lūdzu pārbaudiet interneta savienojumu.");
+        alert(`Kļūda saglabājot datus: ${error.message}\n\nIespējams, nav pareizi sakonfigurētas tiesības (RLS).`);
         setLoading(false);
         return;
       }
