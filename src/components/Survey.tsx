@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ArrowRight, Check, ChevronLeft, Laptop, Smartphone } from 'lucide-react';
+import { ArrowRight, Check, ChevronLeft, Laptop, Smartphone, AlertCircle } from 'lucide-react';
 import { Question, SurveyResponse, DeviceType } from '../types';
 import { DEFAULT_QUESTIONS, generateFingerprint } from '../utils/data';
 import { supabase, isSupabaseConfigured } from '../supabaseClient';
@@ -17,21 +17,36 @@ export const Survey: React.FC<SurveyProps> = ({ deviceType, onComplete }) => {
   const [responses, setResponses] = useState<SurveyResponse[]>([]);
   const [loading, setLoading] = useState(false);
   const [textInput, setTextInput] = useState('');
+  const [fetchError, setFetchError] = useState(false);
 
   // Fetch questions from Supabase if configured, else use Mock
   useEffect(() => {
     const fetchQuestions = async () => {
       if (isSupabaseConfigured() && supabase) {
-        const { data, error } = await supabase.from('questions').select('*').order('order', { ascending: true });
-        if (!error && data && data.length > 0) {
-          setQuestions(data as unknown as Question[]);
+        try {
+          const { data, error } = await supabase.from('questions').select('*').order('order', { ascending: true });
+          
+          if (error) {
+            console.error("Fetch Error:", error);
+            setFetchError(true);
+            return;
+          }
+
+          if (data && data.length > 0) {
+            setQuestions(data as unknown as Question[]);
+          }
+          // If data is empty (length 0), we keep DEFAULT_QUESTIONS (fallback) or we could show empty state
+          // For now, keeping DEFAULT is safer for demos unless explicit reset
+        } catch (e) {
+          console.error("Connection Error", e);
+          setFetchError(true);
         }
       }
     };
     fetchQuestions();
   }, []);
 
-  // Sync text input when step changes (for Back button functionality)
+  // Sync text input when step changes
   useEffect(() => {
       const currentQ = questions[currentStep];
       if (currentQ) {
@@ -47,7 +62,7 @@ export const Survey: React.FC<SurveyProps> = ({ deviceType, onComplete }) => {
     
     // Update responses
     setResponses((prev) => {
-      // Remove existing answer for this question
+      // Remove existing answer for this question to avoid duplicates
       const existing = prev.filter(r => r.questionId !== currentQuestion.id);
       return [...existing, { questionId: currentQuestion.id, answer: value }];
     });
@@ -78,7 +93,7 @@ export const Survey: React.FC<SurveyProps> = ({ deviceType, onComplete }) => {
     const qId = questions[currentStep]?.id;
     if (!qId) return false;
 
-    // For text, check local state or response
+    // For text, check if we have text (optional: make it mandatory if needed)
     if (questions[currentStep].type === 'text') {
         return true; 
     }
@@ -94,15 +109,14 @@ export const Survey: React.FC<SurveyProps> = ({ deviceType, onComplete }) => {
     setLoading(true);
     const fingerprint = generateFingerprint();
     
-    const cleanResponses = responses.filter(r => r.answer !== null && r.answer !== '');
+    // Filter out empty answers
+    const cleanResponses = responses.filter(r => r.answer !== null && r.answer !== '' && r.answer !== undefined);
 
     const payload = {
       device_id: fingerprint,
       answers: cleanResponses,
       created_at: new Date().toISOString()
     };
-
-    console.log("Submitting Payload:", payload);
 
     if (isSupabaseConfigured() && supabase) {
       // Check for duplicates
@@ -113,20 +127,22 @@ export const Survey: React.FC<SurveyProps> = ({ deviceType, onComplete }) => {
         .single();
       
       if (existing) {
-        alert("Šī ierīce jau ir iesniegusi aptauju! Paldies par dalību.");
+        alert("Paldies! Tavs balsojums jau ir reģistrēts.");
         setLoading(false);
         onComplete();
         return;
       }
 
       const { error } = await supabase.from('responses').insert([payload]);
+      
       if (error) {
         console.error("Submission DB Error:", error);
-        alert(`Kļūda saglabājot datus: ${error.message}\n\nIespējams, nav pareizi sakonfigurētas tiesības (RLS).`);
+        alert(`Kļūda saglabājot datus. Lūdzu pārbaudiet interneta savienojumu.\n\nTehniskā kļūda: ${error.message}`);
         setLoading(false);
         return;
       }
     } else {
+      // Mock delay
       await new Promise(resolve => setTimeout(resolve, 800));
     }
 
@@ -215,14 +231,34 @@ export const Survey: React.FC<SurveyProps> = ({ deviceType, onComplete }) => {
 
   // --- COMPACT LAYOUT ---
   
+  if (fetchError) {
+      return (
+          <div className="h-screen flex items-center justify-center p-6 text-center">
+              <div className="max-w-md">
+                  <AlertCircle className="w-12 h-12 text-red-500 mx-auto mb-4" />
+                  <h2 className="text-xl font-bold mb-2">Savienojuma kļūda</h2>
+                  <p className="text-gray-500">Neizdevās ielādēt jautājumus. Lūdzu pārbaudi interneta savienojumu vai sazinies ar administratoru.</p>
+              </div>
+          </div>
+      )
+  }
+
   if (questions.length === 0) return <div className="h-screen flex items-center justify-center"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-science-600"></div></div>;
 
   const q = questions[currentStep];
   const progress = ((currentStep + 1) / questions.length) * 100;
 
   return (
-    <div className="h-[100dvh] flex flex-col bg-gray-50 dark:bg-darkbg text-gray-900 dark:text-gray-100 overflow-hidden">
+    <div className="h-[100dvh] flex flex-col bg-gray-50 dark:bg-darkbg text-gray-900 dark:text-gray-100 overflow-hidden relative">
       
+      {/* Loading Overlay */}
+      {loading && (
+          <div className="absolute inset-0 bg-white/80 dark:bg-slate-900/80 backdrop-blur-sm z-50 flex items-center justify-center flex-col">
+              <div className="animate-spin rounded-full h-12 w-12 border-b-4 border-science-600 mb-4"></div>
+              <p className="text-lg font-bold text-science-700 dark:text-science-400">Saglabā atbildes...</p>
+          </div>
+      )}
+
       {/* 1. Header */}
       <div className="shrink-0 bg-white dark:bg-slate-900/80 border-b border-gray-200 dark:border-slate-800 z-10">
           <div className="h-1.5 w-full bg-gray-100 dark:bg-slate-800">
@@ -270,7 +306,7 @@ export const Survey: React.FC<SurveyProps> = ({ deviceType, onComplete }) => {
         <div className="max-w-lg mx-auto flex gap-3">
           <button
             onClick={() => setCurrentStep(prev => Math.max(0, prev - 1))}
-            disabled={currentStep === 0}
+            disabled={currentStep === 0 || loading}
             className="w-12 h-12 flex items-center justify-center rounded-full bg-gray-100 dark:bg-slate-800 text-gray-500 disabled:opacity-20 active:bg-gray-200 transition-colors"
           >
             <ChevronLeft size={24} />
@@ -282,14 +318,14 @@ export const Survey: React.FC<SurveyProps> = ({ deviceType, onComplete }) => {
              disabled={loading}
              className="flex-1 h-12 bg-science-600 text-white rounded-full font-bold shadow-lg shadow-science-600/20 disabled:opacity-70 disabled:shadow-none flex items-center justify-center gap-2 hover:bg-science-700 active:scale-[0.98] transition-all"
            >
-             {loading ? <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div> : <>Iesniegt <Check size={20} /></>}
+             {loading ? 'Lūdzu uzgaidiet...' : <>Iesniegt <Check size={20} /></>}
            </button>
           ) : (
             <button
             onClick={() => {
                 setCurrentStep(prev => Math.min(questions.length - 1, prev + 1))
             }}
-            disabled={!isCurrentAnswered()}
+            disabled={!isCurrentAnswered() || loading}
             className="flex-1 h-12 bg-gray-900 dark:bg-white dark:text-gray-900 text-white rounded-full font-bold shadow-md disabled:opacity-40 disabled:shadow-none flex items-center justify-center gap-2 active:scale-[0.98] transition-all"
           >
             Tālāk <ArrowRight size={20} />

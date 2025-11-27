@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { supabase, isSupabaseConfigured } from '../supabaseClient';
 import * as XLSX from 'xlsx';
-import { Download, Plus, Trash2, Edit2, LogIn, Database, LogOut, X, Save, AlertCircle, ArrowUp, ArrowDown, Loader2, CheckCircle2, RefreshCw, AlertTriangle, RotateCcw } from 'lucide-react';
+import { Download, Plus, Trash2, Edit2, LogIn, Database, LogOut, X, Save, AlertCircle, ArrowUp, ArrowDown, Loader2, CheckCircle2, RefreshCw, AlertTriangle, RotateCcw, HelpCircle, FileSpreadsheet } from 'lucide-react';
 import { Question } from '../types';
 import { DEFAULT_QUESTIONS } from '../utils/data';
 
@@ -15,6 +15,7 @@ export const Admin: React.FC = () => {
   const [savingOrder, setSavingOrder] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
 
   // --- Modal & Form State ---
   const [showModal, setShowModal] = useState(false);
@@ -41,6 +42,7 @@ export const Admin: React.FC = () => {
 
         return () => subscription.unsubscribe();
     } else {
+        // Fallback for visual testing without DB
         setQuestions(DEFAULT_QUESTIONS);
     }
   }, []);
@@ -55,8 +57,6 @@ export const Admin: React.FC = () => {
       if (qData && qData.length > 0) {
           setQuestions(qData as unknown as Question[]);
       } else if (!error && (!qData || qData.length === 0)) {
-          // Ja DB ir tukša, atstājam tukšu vai piedāvājam defaultus.
-          // Bet lai tabula neizskatītos briesmīgi, mēs sākumā ļaujam ielādēt.
           setQuestions([]); 
       }
   }
@@ -66,7 +66,7 @@ export const Admin: React.FC = () => {
     if (!isSupabaseConfigured() || !supabase) {
         if (email === 'admin' && password === 'admin') {
             setSession({ user: { email: 'mock@admin.com'} });
-            setQuestions(DEFAULT_QUESTIONS); // Mock mode defaults
+            setQuestions(DEFAULT_QUESTIONS);
         } else {
             alert("Demo Login: admin / admin");
         }
@@ -96,7 +96,7 @@ export const Admin: React.FC = () => {
       if (!confirm2) return;
 
       setIsResetting(true);
-      const { error } = await supabase.from('responses').delete().neq('id', -1);
+      const { error } = await supabase.from('responses').delete().neq('id', -1); // Deletes all rows
       
       if (error) {
           alert("Kļūda dzēšot datus: " + error.message);
@@ -262,67 +262,84 @@ export const Admin: React.FC = () => {
       }
   };
 
-  // --- EXPORT FUNCTION ---
+  // --- EXPORT FUNCTION (IMPROVED) ---
   const downloadExcel = async () => {
     let rawResponses = [];
     if (isSupabaseConfigured() && supabase) {
         setLoading(true);
+        // Fetch all responses ordered by newest first
         const { data, error } = await supabase.from('responses').select('*').order('created_at', { ascending: false });
         setLoading(false);
         if (error) return alert('Kļūda lejupielādējot datus: ' + error.message);
         rawResponses = data;
     } else {
         alert("Demo Mode: Exporting mock data.");
-        rawResponses = [{ id: 1, created_at: new Date().toISOString(), device_id: 'abc', answers: [{questionId: 'demo_gender', answer: 'male'}] }];
+        rawResponses = [{ id: 1, created_at: new Date().toISOString(), device_id: 'mock-device', answers: [{questionId: 'demo_gender', answer: 'male'}] }];
     }
 
     if (!rawResponses || rawResponses.length === 0) return alert("Nav datu ko eksportēt.");
 
-    // Prepare headers. Use DB questions, fallback to DEFAULT if DB is empty to ensure headers exist.
-    const activeQuestions = questions.length > 0 ? questions : DEFAULT_QUESTIONS;
+    // 1. Prepare Question Mapping (ID -> Text)
+    // We use current active questions AND try to find unknown IDs from responses
+    const questionMap: Record<string, string> = {};
+    const questionOrder: string[] = [];
 
-    const questionIdToText: Record<string, string> = {};
-    const questionOrder: string[] = []; 
-
-    activeQuestions.forEach(q => {
-        questionIdToText[q.id] = q.text;
+    // Add active questions first (to maintain order)
+    questions.forEach(q => {
+        questionMap[q.id] = q.text;
         questionOrder.push(q.id);
     });
 
+    // 2. Format Data
     const formattedData = rawResponses.map((row: any) => {
-        const rowObject: Record<string, any> = {
-            'ID': row.id,
-            'Laiks': new Date(row.created_at).toLocaleString('lv-LV'),
-            'Ierīce': row.device_id
-        };
-
-        // Init columns
-        questionOrder.forEach(qId => {
-            const qText = questionIdToText[qId];
-            rowObject[qText] = ""; 
+        const dateObj = new Date(row.created_at);
+        const formattedDate = dateObj.toLocaleString('lv-LV', { 
+            year: 'numeric', month: '2-digit', day: '2-digit', 
+            hour: '2-digit', minute: '2-digit' 
         });
 
-        // Fill answers
+        // Initialize row with Metadata
+        const rowObject: Record<string, any> = {
+            'ID': row.id,
+            'Laiks': formattedDate,
+            'Ierīce (Hash)': row.device_id
+        };
+
+        // Fill in answers
         if (Array.isArray(row.answers)) {
             row.answers.forEach((ans: any) => {
-                // Try to find question text, if not found (e.g. deleted question), use ID
-                const qText = questionIdToText[ans.questionId] || `(ID: ${ans.questionId})`;
-                
+                // If we encounter a question ID that isn't in our active list, add it to map
+                if (!questionMap[ans.questionId]) {
+                    questionMap[ans.questionId] = `(Dzēsts jautājums) ${ans.questionId}`;
+                    // Add to order only if not exists
+                    if (!questionOrder.includes(ans.questionId)) {
+                        questionOrder.push(ans.questionId);
+                    }
+                }
+
                 let val = ans.answer;
+                // Handle Checkbox arrays (convert to string)
                 if (Array.isArray(val)) val = val.join(', ');
-                if (val === null || val === undefined) val = "";
                 
-                rowObject[qText] = val;
+                rowObject[questionMap[ans.questionId]] = val;
             });
         }
         return rowObject;
     });
 
+    // 3. Create Worksheet
     const worksheet = XLSX.utils.json_to_sheet(formattedData);
-    const colWidths = Object.keys(formattedData[0] || {}).map(key => ({ wch: key.length > 50 ? 50 : key.length + 5 }));
+    
+    // Auto-width for columns
+    const colWidths = Object.keys(formattedData[0] || {}).map(key => ({ 
+        wch: Math.min(50, Math.max(15, key.length)) // Min 15 chars, Max 50 chars
+    }));
     (worksheet as any)['!cols'] = colWidths;
+
+    // 4. Write File
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, "Aptaujas Dati");
+    
     const fileName = `ImmunoSurvey_Eksports_${new Date().toISOString().slice(0,10)}.xlsx`;
     XLSX.writeFile(workbook, fileName);
   };
@@ -343,11 +360,25 @@ export const Admin: React.FC = () => {
                 </div>
                 <button type="submit" disabled={loading} className="w-full py-3 bg-science-600 text-white rounded-lg font-bold hover:bg-science-700 transition flex justify-center items-center gap-2"><LogIn size={20} /> Ielogoties</button>
             </form>
-            <div className="mt-6 flex justify-center">
+            
+            <div className="mt-6 flex flex-col items-center gap-3">
                  {isSupabaseConfigured() ? (
                      <span className="flex items-center gap-2 text-xs text-green-600 bg-green-100 px-3 py-1 rounded-full"><Database size={12}/> Savienots ar DB</span>
                  ) : (
-                     <span className="flex items-center gap-2 text-xs text-red-600 bg-red-100 px-3 py-1 rounded-full"><AlertTriangle size={12}/> Nav savienojuma (Demo)</span>
+                     <div className="w-full">
+                         <button 
+                            onClick={() => setShowHelp(!showHelp)}
+                            className="w-full flex items-center justify-center gap-2 text-xs text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 px-3 py-2 rounded-lg transition-colors"
+                         >
+                            <AlertTriangle size={14}/> Nav savienojuma (Demo) <HelpCircle size={14} className="ml-1"/>
+                         </button>
+                         {showHelp && (
+                            <div className="mt-3 p-4 bg-gray-50 dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-lg text-left text-xs text-gray-600 dark:text-gray-400">
+                                <p className="font-bold mb-2">Kā pieslēgt datubāzi?</p>
+                                <p>Pārliecinies, ka failā <code>.env</code> projekta saknē ir pareizie URL un KEY no Supabase.</p>
+                            </div>
+                         )}
+                     </div>
                  )}
             </div>
         </div>
@@ -385,7 +416,7 @@ export const Admin: React.FC = () => {
                         </p>
                     </div>
                     <div className="bg-white/20 p-4 rounded-full backdrop-blur-sm group-hover:bg-white/30 transition">
-                        {loading ? <Loader2 className="animate-spin" size={32} /> : <Download size={32} />}
+                        {loading ? <Loader2 className="animate-spin" size={32} /> : <FileSpreadsheet size={32} />}
                     </div>
                 </div>
             </div>
@@ -415,14 +446,14 @@ export const Admin: React.FC = () => {
                     {questions.length === 0 ? (
                         <div className="p-16 text-center text-gray-400 flex flex-col items-center">
                             <AlertCircle size={48} className="mb-4 opacity-20" />
-                            <p className="text-lg font-medium">Saraksts ir tukšs (izmanto "default" datu ielādi)</p>
-                            <p className="text-sm mb-6">Pievieno pirmo jautājumu vai ielādē gatavo paraugu.</p>
+                            <h4 className="text-lg font-bold text-gray-700 dark:text-gray-300">Datubāze ir tukša</h4>
+                            <p className="text-sm mb-6 max-w-sm mx-auto">Lai sāktu anketēšanu, lūdzu, izveidojiet jaunu jautājumu vai ielādējiet sagatavoto veidni.</p>
                             <button 
                                 onClick={initializeDefaults}
                                 disabled={loading}
                                 className="px-6 py-3 bg-science-100 text-science-700 rounded-xl font-bold hover:bg-science-200 transition flex items-center gap-2"
                             >
-                                <RefreshCw size={18} /> Ielādēt noklusētos jautājumus
+                                <RefreshCw size={18} /> Ielādēt standarta jautājumus
                             </button>
                         </div>
                     ) : (
@@ -434,7 +465,6 @@ export const Admin: React.FC = () => {
                                             onClick={() => moveQuestion(idx, 'up')}
                                             disabled={idx === 0 || savingOrder}
                                             className="p-2 rounded-lg bg-gray-100 dark:bg-slate-700 text-gray-500 hover:text-science-600 hover:bg-science-50 disabled:opacity-20 transition active:scale-90"
-                                            title="Pārvietot uz augšu"
                                         >
                                             <ArrowUp size={20} strokeWidth={3} />
                                         </button>
@@ -442,7 +472,6 @@ export const Admin: React.FC = () => {
                                             onClick={() => moveQuestion(idx, 'down')}
                                             disabled={idx === questions.length - 1 || savingOrder}
                                             className="p-2 rounded-lg bg-gray-100 dark:bg-slate-700 text-gray-500 hover:text-science-600 hover:bg-science-50 disabled:opacity-20 transition active:scale-90"
-                                            title="Pārvietot uz leju"
                                         >
                                             <ArrowDown size={20} strokeWidth={3} />
                                         </button>
@@ -458,11 +487,6 @@ export const Admin: React.FC = () => {
                                             </span>
                                         </div>
                                         <p className="font-semibold text-lg text-gray-800 dark:text-gray-200 leading-snug">{q.text}</p>
-                                        {(q.options) && (
-                                            <p className="text-sm text-gray-500 mt-2 line-clamp-1 opacity-75">
-                                                {q.options.map(o => o.text).join(', ')}
-                                            </p>
-                                        )}
                                     </div>
 
                                     <div className="flex gap-2 w-full sm:w-auto pt-4 sm:pt-0 border-t sm:border-t-0 border-gray-100 dark:border-slate-700 mt-4 sm:mt-0">
