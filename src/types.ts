@@ -8,11 +8,12 @@ export interface Question {
   id: string;
   text: string;
   type: 'single' | 'multiple' | 'scale' | 'text';
-  options?: Option[]; // For single/multiple choice
-  min?: number; // For scale
-  max?: number; // For scale
-  minLabel?: string;
-  maxLabel?: string;
+  options?: Option[] | null;
+  min?: number | null;
+  max?: number | null;
+  minLabel?: string | null;
+  maxLabel?: string | null;
+  order?: number;
 }
 
 export interface SurveyResponse {
