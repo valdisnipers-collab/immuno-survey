@@ -248,24 +248,23 @@ export const Admin: React.FC = () => {
     if (!rawResponses || rawResponses.length === 0) return alert("Nav datu ko eksportēt.");
 
     // 1. Prepare Header Row based on CURRENT questions (and their order)
-    // We use a Map to quickly lookup question text by ID
     const questionIdToText: Record<string, string> = {};
-    const questionOrder: string[] = []; // Stores IDs in correct order
+    const questionOrder: string[] = []; 
 
     questions.forEach(q => {
         questionIdToText[q.id] = q.text;
         questionOrder.push(q.id);
     });
 
-    // 2. Transform Data
+    // 2. Transform Data using Record<string, any> to avoid TS errors
     const formattedData = rawResponses.map((row: any) => {
-        const rowObject: any = {
+        const rowObject: Record<string, any> = {
             'ID': row.id,
             'Laiks': new Date(row.created_at).toLocaleString('lv-LV'),
             'Ierīce': row.device_id
         };
 
-        // Initialize all active question columns with empty string
+        // Initialize all active question columns
         questionOrder.forEach(qId => {
             const qText = questionIdToText[qId];
             rowObject[qText] = ""; 
@@ -277,8 +276,6 @@ export const Admin: React.FC = () => {
                 const qText = questionIdToText[ans.questionId];
                 
                 // If question exists in current schema, put it there.
-                // If it was deleted, we append it with (Dzēsts) prefix or ignore based on preference.
-                // Here we include it for completeness.
                 const key = qText || `(Dzēsts) ${ans.questionId}`;
                 
                 let val = ans.answer;
@@ -296,7 +293,8 @@ export const Admin: React.FC = () => {
     
     // Auto-adjust col widths
     const colWidths = Object.keys(formattedData[0] || {}).map(key => ({ wch: key.length > 50 ? 50 : key.length + 5 }));
-    worksheet['!cols'] = colWidths;
+    // Fix TS error by casting to any for custom property
+    (worksheet as any)['!cols'] = colWidths;
 
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, "Aptaujas Dati");

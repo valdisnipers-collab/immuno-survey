@@ -49,20 +49,15 @@ export const Survey: React.FC<SurveyProps> = ({ deviceType, onComplete }) => {
     setResponses((prev) => {
       // Remove existing answer for this question
       const existing = prev.filter(r => r.questionId !== currentQuestion.id);
-      
-      // Handle multiple choice toggle if needed (currently implementation implies single array replacement)
-      // For type 'multiple', we might need different logic, but assuming simple selection for now:
       return [...existing, { questionId: currentQuestion.id, answer: value }];
     });
 
     // Auto-advance logic
-    // Only auto-advance for single choice and scale if it's not the last question
     if (
         currentQuestion.type !== 'multiple' && 
         currentQuestion.type !== 'text' && 
         currentStep < questions.length - 1
     ) {
-      // Small delay for visual feedback
       setTimeout(() => {
           setCurrentStep(c => c + 1);
       }, 250);
@@ -73,7 +68,6 @@ export const Survey: React.FC<SurveyProps> = ({ deviceType, onComplete }) => {
     const val = e.target.value;
     setTextInput(val);
     
-    // Debounce or direct update? Direct update is safer for "Next" button state
     setResponses((prev) => {
         const existing = prev.filter(r => r.questionId !== questions[currentStep].id);
         return [...existing, { questionId: questions[currentStep].id, answer: val }];
@@ -86,7 +80,6 @@ export const Survey: React.FC<SurveyProps> = ({ deviceType, onComplete }) => {
 
     // For text, check local state or response
     if (questions[currentStep].type === 'text') {
-        // Text is optional? If mandatory, check textInput.trim().length > 0
         return true; 
     }
 
@@ -101,7 +94,6 @@ export const Survey: React.FC<SurveyProps> = ({ deviceType, onComplete }) => {
     setLoading(true);
     const fingerprint = generateFingerprint();
     
-    // Ensure data integrity: filter out any empty text responses if necessary
     const cleanResponses = responses.filter(r => r.answer !== null && r.answer !== '');
 
     const payload = {
@@ -123,7 +115,7 @@ export const Survey: React.FC<SurveyProps> = ({ deviceType, onComplete }) => {
       if (existing) {
         alert("Šī ierīce jau ir iesniegusi aptauju! Paldies par dalību.");
         setLoading(false);
-        onComplete(); // Still allow them to see success screen
+        onComplete();
         return;
       }
 
@@ -135,7 +127,6 @@ export const Survey: React.FC<SurveyProps> = ({ deviceType, onComplete }) => {
         return;
       }
     } else {
-      // Mock delay
       await new Promise(resolve => setTimeout(resolve, 800));
     }
 
@@ -222,7 +213,7 @@ export const Survey: React.FC<SurveyProps> = ({ deviceType, onComplete }) => {
       )
   }
 
-  // --- COMPACT LAYOUT (One Screen Design) ---
+  // --- COMPACT LAYOUT ---
   
   if (questions.length === 0) return <div className="h-screen flex items-center justify-center"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-science-600"></div></div>;
 
@@ -232,7 +223,7 @@ export const Survey: React.FC<SurveyProps> = ({ deviceType, onComplete }) => {
   return (
     <div className="h-[100dvh] flex flex-col bg-gray-50 dark:bg-darkbg text-gray-900 dark:text-gray-100 overflow-hidden">
       
-      {/* 1. Header (Fixed) - Minimalist */}
+      {/* 1. Header */}
       <div className="shrink-0 bg-white dark:bg-slate-900/80 border-b border-gray-200 dark:border-slate-800 z-10">
           <div className="h-1.5 w-full bg-gray-100 dark:bg-slate-800">
             <motion.div 
@@ -252,7 +243,7 @@ export const Survey: React.FC<SurveyProps> = ({ deviceType, onComplete }) => {
           </div>
       </div>
 
-      {/* 2. Main Content (Flexible, Scrollable inside if needed) */}
+      {/* 2. Content */}
       <div className="flex-1 overflow-y-auto px-4 py-2 w-full max-w-lg mx-auto flex flex-col justify-center">
           <AnimatePresence mode="wait">
             <motion.div
@@ -263,12 +254,10 @@ export const Survey: React.FC<SurveyProps> = ({ deviceType, onComplete }) => {
               transition={{ duration: 0.2 }}
               className="py-2"
             >
-              {/* Question Text - Compact but readable */}
               <h2 className="text-xl md:text-2xl font-bold mb-4 md:mb-6 text-left leading-snug text-gray-800 dark:text-white">
                   {q.text}
               </h2>
               
-              {/* Options Area */}
               <div className="w-full">
                  {q.type === 'scale' ? renderScale(q) : q.type === 'text' ? renderText(q) : renderOptions(q)}
               </div>
@@ -276,7 +265,7 @@ export const Survey: React.FC<SurveyProps> = ({ deviceType, onComplete }) => {
           </AnimatePresence>
       </div>
 
-      {/* 3. Footer Navigation (Fixed Bottom) */}
+      {/* 3. Footer */}
       <div className="shrink-0 bg-white dark:bg-slate-900 border-t border-gray-100 dark:border-slate-800 p-4 pb-6 z-20 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
         <div className="max-w-lg mx-auto flex gap-3">
           <button
@@ -298,8 +287,6 @@ export const Survey: React.FC<SurveyProps> = ({ deviceType, onComplete }) => {
           ) : (
             <button
             onClick={() => {
-                // Clear input only if moving to a fresh text question? 
-                // No, state management handles this via useEffect
                 setCurrentStep(prev => Math.min(questions.length - 1, prev + 1))
             }}
             disabled={!isCurrentAnswered()}
