@@ -54,7 +54,6 @@ export const Admin: React.FC = () => {
       if (qData && qData.length > 0) {
           setQuestions(qData as unknown as Question[]);
       } else if (!error && (!qData || qData.length === 0)) {
-          // If DB is empty, keep state empty so user can decide to load defaults
           setQuestions([]);
       }
   }
@@ -93,7 +92,7 @@ export const Admin: React.FC = () => {
       const payload = updatedQuestions.map((q, i) => ({
           ...q,
           order: i + 1,
-          options: q.options || null // Ensure JSON compatibility
+          options: q.options || null 
       }));
 
       const { error } = await supabase.from('questions').upsert(payload);
@@ -118,11 +117,7 @@ export const Admin: React.FC = () => {
       } else {
           return; // No change
       }
-      
-      // Optimistic UI Update
       setQuestions(newQuestions);
-      
-      // Background Save
       saveOrderToDb(newQuestions);
   };
 
@@ -235,67 +230,79 @@ export const Admin: React.FC = () => {
       }
   };
 
+  // --- EXPORT FUNCTION ---
   const downloadExcel = async () => {
-    let dataToExport = [];
+    let rawResponses = [];
     if (isSupabaseConfigured() && supabase) {
         setLoading(true);
+        // Fetch ALL responses
         const { data, error } = await supabase.from('responses').select('*').order('created_at', { ascending: false });
         setLoading(false);
         if (error) return alert('Kļūda lejupielādējot datus: ' + error.message);
-        dataToExport = data;
+        rawResponses = data;
     } else {
         alert("Demo Mode: Exporting mock data.");
-        dataToExport = [{ id: 1, created_at: new Date().toISOString(), device_id: 'abc', answers: [{questionId: 'demo_gender', answer: 'male'}] }];
+        rawResponses = [{ id: 1, created_at: new Date().toISOString(), device_id: 'abc', answers: [{questionId: 'demo_gender', answer: 'male'}] }];
     }
 
-    if (dataToExport.length === 0) return alert("Nav datu ko eksportēt.");
+    if (!rawResponses || rawResponses.length === 0) return alert("Nav datu ko eksportēt.");
 
-    // Improved Excel Mapping Logic
-    // 1. Create a map of QuestionID -> QuestionText for all currently active questions
-    const questionMap: Record<string, string> = {};
+    // 1. Prepare Header Row based on CURRENT questions (and their order)
+    // We use a Map to quickly lookup question text by ID
+    const questionIdToText: Record<string, string> = {};
+    const questionOrder: string[] = []; // Stores IDs in correct order
+
     questions.forEach(q => {
-        questionMap[q.id] = q.text;
+        questionIdToText[q.id] = q.text;
+        questionOrder.push(q.id);
     });
 
-    // 2. Build rows
-    const flatData = dataToExport.map((row: any) => {
-        // Base columns
-        const rowData: any = { 
+    // 2. Transform Data
+    const formattedData = rawResponses.map((row: any) => {
+        const rowObject: any = {
             'ID': row.id,
-            'Datums': new Date(row.created_at).toLocaleString('lv-LV'), 
-            'Ierīces_ID': row.device_id 
+            'Laiks': new Date(row.created_at).toLocaleString('lv-LV'),
+            'Ierīce': row.device_id
         };
 
-        // Initialize all active question columns with empty string to ensure column order
-        questions.forEach(q => {
-            rowData[q.text] = "";
+        // Initialize all active question columns with empty string
+        questionOrder.forEach(qId => {
+            const qText = questionIdToText[qId];
+            rowObject[qText] = ""; 
         });
 
-        // Fill in answers
+        // Fill in actual answers
         if (Array.isArray(row.answers)) {
             row.answers.forEach((ans: any) => {
-                // Determine column name
-                // If question exists in current list, use its text. If not (deleted), append (Dzēsts)
-                const columnName = questionMap[ans.questionId] || `(Dzēsts) ${ans.questionId}`;
+                const qText = questionIdToText[ans.questionId];
                 
-                // Format value
-                const val = Array.isArray(ans.answer) ? ans.answer.join(', ') : ans.answer;
+                // If question exists in current schema, put it there.
+                // If it was deleted, we append it with (Dzēsts) prefix or ignore based on preference.
+                // Here we include it for completeness.
+                const key = qText || `(Dzēsts) ${ans.questionId}`;
                 
-                rowData[columnName] = val;
+                let val = ans.answer;
+                if (Array.isArray(val)) val = val.join(', '); // Handle multiple choice arrays
+                if (val === null || val === undefined) val = "";
+                
+                rowObject[key] = val;
             });
         }
-        return rowData;
+        return rowObject;
     });
 
-    const worksheet = XLSX.utils.json_to_sheet(flatData);
+    // 3. Generate Sheet
+    const worksheet = XLSX.utils.json_to_sheet(formattedData);
     
-    // Auto-adjust column width slightly
-    const colWidths = Object.keys(flatData[0] || {}).map(key => ({ wch: 20 }));
+    // Auto-adjust col widths
+    const colWidths = Object.keys(formattedData[0] || {}).map(key => ({ wch: key.length > 50 ? 50 : key.length + 5 }));
     worksheet['!cols'] = colWidths;
 
     const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Rezultāti");
-    XLSX.writeFile(workbook, `ImmunoSurvey_Dati_${new Date().toISOString().slice(0,10)}.xlsx`);
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Aptaujas Dati");
+    
+    const fileName = `ImmunoSurvey_Eksports_${new Date().toISOString().slice(0,10)}.xlsx`;
+    XLSX.writeFile(workbook, fileName);
   };
 
   if (!session) {
@@ -393,7 +400,6 @@ export const Admin: React.FC = () => {
                         <div className="divide-y divide-gray-100 dark:divide-slate-700">
                             {questions.map((q, idx) => (
                                 <div key={q.id} className="p-4 sm:p-6 flex flex-col sm:flex-row justify-between items-start sm:items-center hover:bg-gray-50 dark:hover:bg-slate-700/30 transition group gap-4">
-                                    {/* Order Controls - MORE PROMINENT */}
                                     <div className="flex sm:flex-col gap-2 pr-4 border-r border-gray-100 dark:border-slate-700 items-center justify-center">
                                         <button 
                                             onClick={() => moveQuestion(idx, 'up')}

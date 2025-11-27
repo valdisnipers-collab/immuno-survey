@@ -31,38 +31,66 @@ export const Survey: React.FC<SurveyProps> = ({ deviceType, onComplete }) => {
     fetchQuestions();
   }, []);
 
+  // Sync text input when step changes (for Back button functionality)
+  useEffect(() => {
+      const currentQ = questions[currentStep];
+      if (currentQ) {
+          const existingAnswer = responses.find(r => r.questionId === currentQ.id)?.answer;
+          if (currentQ.type === 'text') {
+              setTextInput((existingAnswer as string) || '');
+          }
+      }
+  }, [currentStep, questions, responses]);
+
   const handleAnswer = (value: string | number) => {
     const currentQuestion = questions[currentStep];
     
     // Update responses
     setResponses((prev) => {
+      // Remove existing answer for this question
       const existing = prev.filter(r => r.questionId !== currentQuestion.id);
+      
+      // Handle multiple choice toggle if needed (currently implementation implies single array replacement)
+      // For type 'multiple', we might need different logic, but assuming simple selection for now:
       return [...existing, { questionId: currentQuestion.id, answer: value }];
     });
 
-    // Auto-advance for single choice (works on both mobile and desktop now)
-    if (currentQuestion.type !== 'multiple' && currentQuestion.type !== 'text') {
+    // Auto-advance logic
+    // Only auto-advance for single choice and scale if it's not the last question
+    if (
+        currentQuestion.type !== 'multiple' && 
+        currentQuestion.type !== 'text' && 
+        currentStep < questions.length - 1
+    ) {
+      // Small delay for visual feedback
       setTimeout(() => {
-        if (currentStep < questions.length - 1) {
           setCurrentStep(c => c + 1);
-        }
-      }, 300);
+      }, 250);
     }
   };
 
   const handleTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setTextInput(e.target.value);
-    handleAnswer(e.target.value);
+    const val = e.target.value;
+    setTextInput(val);
+    
+    // Debounce or direct update? Direct update is safer for "Next" button state
+    setResponses((prev) => {
+        const existing = prev.filter(r => r.questionId !== questions[currentStep].id);
+        return [...existing, { questionId: questions[currentStep].id, answer: val }];
+    });
   };
 
   const isCurrentAnswered = () => {
-    const qId = questions[currentStep].id;
-    const hasResponse = responses.some(r => r.questionId === qId);
-    
+    const qId = questions[currentStep]?.id;
+    if (!qId) return false;
+
+    // For text, check local state or response
     if (questions[currentStep].type === 'text') {
-        return true; // Text fields are optional regarding navigation logic
+        // Text is optional? If mandatory, check textInput.trim().length > 0
+        return true; 
     }
-    return hasResponse;
+
+    return responses.some(r => r.questionId === qId);
   };
 
   const getResponseValue = (qId: string) => {
@@ -72,14 +100,20 @@ export const Survey: React.FC<SurveyProps> = ({ deviceType, onComplete }) => {
   const submitSurvey = async () => {
     setLoading(true);
     const fingerprint = generateFingerprint();
+    
+    // Ensure data integrity: filter out any empty text responses if necessary
+    const cleanResponses = responses.filter(r => r.answer !== null && r.answer !== '');
+
     const payload = {
       device_id: fingerprint,
-      answers: responses,
+      answers: cleanResponses,
       created_at: new Date().toISOString()
     };
 
+    console.log("Submitting Payload:", payload);
+
     if (isSupabaseConfigured() && supabase) {
-      // Check if device already exists (Production Mode Enabled)
+      // Check for duplicates
       const { data: existing } = await supabase
         .from('responses')
         .select('id')
@@ -89,19 +123,20 @@ export const Survey: React.FC<SurveyProps> = ({ deviceType, onComplete }) => {
       if (existing) {
         alert("Šī ierīce jau ir iesniegusi aptauju! Paldies par dalību.");
         setLoading(false);
+        onComplete(); // Still allow them to see success screen
         return;
       }
 
       const { error } = await supabase.from('responses').insert([payload]);
       if (error) {
-        console.error("Submission failed", error);
-        alert("Kļūda saglabājot datus. Lūdzu mēģiniet vēlreiz.");
+        console.error("Submission DB Error:", error);
+        alert("Kļūda saglabājot datus. Lūdzu pārbaudiet interneta savienojumu.");
         setLoading(false);
         return;
       }
     } else {
-      console.log("MOCK SUBMISSION:", payload);
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      // Mock delay
+      await new Promise(resolve => setTimeout(resolve, 800));
     }
 
     localStorage.setItem('hasVoted', 'true');
@@ -113,7 +148,7 @@ export const Survey: React.FC<SurveyProps> = ({ deviceType, onComplete }) => {
 
   const renderOptions = (q: Question) => {
     return (
-      <div className="space-y-3 w-full">
+      <div className="space-y-2 w-full">
         {q.options?.map((opt) => {
           const isSelected = getResponseValue(q.id) === opt.value;
           return (
@@ -122,14 +157,19 @@ export const Survey: React.FC<SurveyProps> = ({ deviceType, onComplete }) => {
               whileTap={{ scale: 0.98 }}
               onClick={() => handleAnswer(opt.value)}
               className={clsx(
-                "w-full p-4 rounded-xl border-2 text-left transition-all duration-200 flex items-center justify-between group",
+                "w-full px-4 py-3 rounded-xl border text-left transition-all duration-200 flex items-center justify-between group",
                 isSelected 
-                  ? "border-science-500 bg-science-50 dark:bg-science-900/30 text-science-700 dark:text-science-300 shadow-md" 
-                  : "border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:border-science-300 dark:hover:border-science-700 hover:shadow-sm"
+                  ? "border-science-500 bg-science-50 dark:bg-science-900/40 text-science-700 dark:text-science-300 shadow-sm ring-1 ring-science-500" 
+                  : "border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:border-science-300 dark:hover:border-science-600"
               )}
             >
-              <span className="font-medium text-lg">{opt.text}</span>
-              {isSelected && <Check className="w-5 h-5 text-science-500" />}
+              <span className="font-medium text-base md:text-lg leading-tight">{opt.text}</span>
+              <div className={clsx(
+                  "w-5 h-5 rounded-full border flex items-center justify-center ml-2",
+                  isSelected ? "border-science-500 bg-science-500 text-white" : "border-gray-300 dark:border-slate-500"
+              )}>
+                  {isSelected && <Check size={12} strokeWidth={4} />}
+              </div>
             </motion.button>
           );
         })}
@@ -143,22 +183,22 @@ export const Survey: React.FC<SurveyProps> = ({ deviceType, onComplete }) => {
     const currentVal = getResponseValue(q.id) as number;
     
     return (
-      <div className="w-full mt-6">
-        <div className="flex justify-between text-sm text-gray-500 mb-4 font-medium">
+      <div className="w-full mt-2">
+        <div className="flex justify-between text-xs md:text-sm text-gray-500 mb-3 font-medium px-1">
           <span>{q.minLabel}</span>
           <span>{q.maxLabel}</span>
         </div>
-        <div className="flex justify-center gap-2 flex-wrap">
+        <div className="grid grid-cols-5 gap-2 md:flex md:justify-center md:gap-3">
           {Array.from({ length: max - min + 1 }, (_, i) => i + min).map((val) => (
             <motion.button
               key={val}
               whileTap={{ scale: 0.9 }}
               onClick={() => handleAnswer(val)}
               className={clsx(
-                "w-10 h-10 sm:w-12 sm:h-12 rounded-lg flex items-center justify-center font-bold transition-colors shadow-sm",
+                "aspect-square rounded-lg flex items-center justify-center font-bold transition-all shadow-sm text-lg md:w-12 md:h-12",
                 currentVal === val
-                  ? "bg-science-500 text-white shadow-lg shadow-science-500/30 scale-110"
-                  : "bg-gray-100 dark:bg-slate-700 text-gray-600 dark:text-gray-300 hover:bg-science-100 dark:hover:bg-slate-600"
+                  ? "bg-science-600 text-white shadow-science-500/30 scale-105"
+                  : "bg-white border border-gray-200 dark:bg-slate-700 dark:border-slate-600 text-gray-700 dark:text-gray-200"
               )}
             >
               {val}
@@ -171,99 +211,99 @@ export const Survey: React.FC<SurveyProps> = ({ deviceType, onComplete }) => {
 
   const renderText = (q: Question) => {
       return (
-          <div className="w-full">
+          <div className="w-full h-full flex flex-col">
               <textarea 
-                className="w-full p-4 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-science-500 outline-none h-32 resize-none"
+                className="w-full flex-1 p-4 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-science-500 outline-none resize-none min-h-[150px] text-base"
                 placeholder="Raksti savu atbildi šeit..."
-                value={textInput || (getResponseValue(q.id) as string) || ''}
+                value={textInput}
                 onChange={handleTextChange}
               />
           </div>
       )
   }
 
-  // --- UNIFIED VIEW (Wizard / Step-by-Step for ALL devices) ---
+  // --- COMPACT LAYOUT (One Screen Design) ---
   
+  if (questions.length === 0) return <div className="h-screen flex items-center justify-center"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-science-600"></div></div>;
+
   const q = questions[currentStep];
   const progress = ((currentStep + 1) / questions.length) * 100;
 
   return (
-    <div className="min-h-screen flex flex-col bg-gray-50 dark:bg-darkbg text-gray-900 dark:text-gray-100 transition-colors">
+    <div className="h-[100dvh] flex flex-col bg-gray-50 dark:bg-darkbg text-gray-900 dark:text-gray-100 overflow-hidden">
       
-      {/* Top Bar with Progress */}
-      <div className="fixed top-0 left-0 w-full z-50 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-b border-gray-200 dark:border-slate-800">
-          <div className="h-1 w-full bg-gray-100 dark:bg-slate-800">
+      {/* 1. Header (Fixed) - Minimalist */}
+      <div className="shrink-0 bg-white dark:bg-slate-900/80 border-b border-gray-200 dark:border-slate-800 z-10">
+          <div className="h-1.5 w-full bg-gray-100 dark:bg-slate-800">
             <motion.div 
-                className="h-full bg-science-500" 
+                className="h-full bg-science-500 rounded-r-full" 
                 initial={{ width: 0 }} 
                 animate={{ width: `${progress}%` }} 
-                transition={{ duration: 0.5 }}
+                transition={{ duration: 0.4 }}
             />
           </div>
-          <div className="max-w-4xl mx-auto px-6 py-4 flex justify-between items-center">
-              <div className="text-sm font-bold text-science-600 dark:text-science-400">
-                 {currentStep + 1} / {questions.length}
-              </div>
-              <div className="text-xs text-gray-400 flex items-center gap-2">
-                 {deviceType === DeviceType.DESKTOP ? <Laptop size={14}/> : <Smartphone size={14}/>}
-                 <span>{deviceType === DeviceType.DESKTOP ? 'Datora skats' : 'Mobilais skats'}</span>
+          <div className="px-4 py-3 flex justify-between items-center max-w-2xl mx-auto">
+              <span className="text-xs font-bold text-science-600 dark:text-science-400 bg-science-50 dark:bg-science-900/50 px-2 py-1 rounded-md">
+                 Jautājums {currentStep + 1} / {questions.length}
+              </span>
+              <div className="text-[10px] text-gray-400 flex items-center gap-1.5">
+                 {deviceType === DeviceType.DESKTOP ? <Laptop size={12}/> : <Smartphone size={12}/>}
               </div>
           </div>
       </div>
 
-      {/* Main Content Area */}
-      <div className="flex-1 flex flex-col justify-center items-center p-6 mt-16 pb-24 w-full">
-        <div className="w-full max-w-2xl">
+      {/* 2. Main Content (Flexible, Scrollable inside if needed) */}
+      <div className="flex-1 overflow-y-auto px-4 py-2 w-full max-w-lg mx-auto flex flex-col justify-center">
           <AnimatePresence mode="wait">
             <motion.div
               key={currentStep}
-              initial={{ opacity: 0, x: 20 }}
+              initial={{ opacity: 0, x: 10 }}
               animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -20 }}
-              transition={{ duration: 0.3, ease: "easeInOut" }}
-              className="bg-white dark:bg-slate-800 p-6 md:p-10 rounded-3xl shadow-xl border border-gray-100 dark:border-slate-700"
+              exit={{ opacity: 0, x: -10 }}
+              transition={{ duration: 0.2 }}
+              className="py-2"
             >
-              <h2 className="text-2xl md:text-3xl font-bold mb-8 text-center leading-tight text-gray-800 dark:text-white">
+              {/* Question Text - Compact but readable */}
+              <h2 className="text-xl md:text-2xl font-bold mb-4 md:mb-6 text-left leading-snug text-gray-800 dark:text-white">
                   {q.text}
               </h2>
               
-              <div className="flex justify-center w-full">
-                  <div className="w-full max-w-lg">
-                    {q.type === 'scale' ? renderScale(q) : q.type === 'text' ? renderText(q) : renderOptions(q)}
-                  </div>
+              {/* Options Area */}
+              <div className="w-full">
+                 {q.type === 'scale' ? renderScale(q) : q.type === 'text' ? renderText(q) : renderOptions(q)}
               </div>
             </motion.div>
           </AnimatePresence>
-        </div>
       </div>
 
-      {/* Bottom Navigation */}
-      <div className="fixed bottom-0 left-0 w-full bg-white dark:bg-slate-900 border-t border-gray-100 dark:border-slate-800 p-4 md:p-6 z-40">
-        <div className="max-w-2xl mx-auto flex justify-between items-center">
+      {/* 3. Footer Navigation (Fixed Bottom) */}
+      <div className="shrink-0 bg-white dark:bg-slate-900 border-t border-gray-100 dark:border-slate-800 p-4 pb-6 z-20 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
+        <div className="max-w-lg mx-auto flex gap-3">
           <button
             onClick={() => setCurrentStep(prev => Math.max(0, prev - 1))}
             disabled={currentStep === 0}
-            className="p-4 rounded-full text-gray-400 disabled:opacity-30 hover:bg-gray-100 dark:hover:bg-slate-800 transition group"
+            className="w-12 h-12 flex items-center justify-center rounded-full bg-gray-100 dark:bg-slate-800 text-gray-500 disabled:opacity-20 active:bg-gray-200 transition-colors"
           >
-            <ChevronLeft className="group-hover:-translate-x-1 transition-transform" />
+            <ChevronLeft size={24} />
           </button>
           
           {currentStep === questions.length - 1 ? (
              <button
              onClick={submitSurvey}
              disabled={loading}
-             className="px-8 py-4 bg-science-600 text-white rounded-full font-bold shadow-lg shadow-science-600/30 disabled:opacity-50 disabled:shadow-none flex items-center gap-3 hover:bg-science-700 transition-all active:scale-95"
+             className="flex-1 h-12 bg-science-600 text-white rounded-full font-bold shadow-lg shadow-science-600/20 disabled:opacity-70 disabled:shadow-none flex items-center justify-center gap-2 hover:bg-science-700 active:scale-[0.98] transition-all"
            >
-             {loading ? 'Sūta...' : 'Iesniegt anketu'} <Check size={20} />
+             {loading ? <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div> : <>Iesniegt <Check size={20} /></>}
            </button>
           ) : (
             <button
             onClick={() => {
-                setTextInput(''); 
+                // Clear input only if moving to a fresh text question? 
+                // No, state management handles this via useEffect
                 setCurrentStep(prev => Math.min(questions.length - 1, prev + 1))
             }}
             disabled={!isCurrentAnswered()}
-            className="px-8 py-4 bg-gray-900 dark:bg-white dark:text-gray-900 text-white rounded-full font-bold disabled:opacity-50 transition-all flex items-center gap-3 hover:shadow-lg active:scale-95"
+            className="flex-1 h-12 bg-gray-900 dark:bg-white dark:text-gray-900 text-white rounded-full font-bold shadow-md disabled:opacity-40 disabled:shadow-none flex items-center justify-center gap-2 active:scale-[0.98] transition-all"
           >
             Tālāk <ArrowRight size={20} />
           </button>
